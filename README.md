@@ -35,6 +35,12 @@ Before running the first time run the following script to setup the .env file:
 ./setup.sh
 ```
 
+## Secrets / API Keys
+
+The only secret required to run this app is a free API Key from https://basescan.org/
+Once you have acquired one you can update it in the .env file
+
+
 ### Run Realtime Monitor
 ```
 python -m src.cli monitor --contract-address 0x8a72f8c0184b825c724f0cc3d2229cc6c36ea9d7
