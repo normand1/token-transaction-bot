@@ -54,18 +54,28 @@ def monitor(contract_address: str, poll_interval: int):
         while True:
             current_block = client.get_latest_block()
             if current_block > last_block:
-                events = client.get_contract_transfers(contract, from_block=last_block + 1, to_block=current_block)
-                for event in events:
+                transfer_events = client.get_contract_transfers(contract, from_block=last_block + 1, to_block=current_block)
+                click.echo(f"Found {len(transfer_events)} new transfer events")
+
+                for transfer_event in transfer_events:
                     decimals = client.get_token_decimals(contract)
 
-                    block_number = event.get("blockNumber", "latest")
-                    from_address = event.get("from", "N/A")
-                    to_address = event.get("to", "N/A")
+                    block_number = transfer_event.get("blockNumber", "latest")
+                    from_address = transfer_event.get("from", "N/A")
+                    to_address = transfer_event.get("to", "N/A")
 
                     from_balance_before = basescan_client.get_token_balance(from_address, contract, decimals, block_identifier=block_number - 1)
                     to_balance_before = basescan_client.get_token_balance(to_address, contract, decimals, block_identifier=block_number - 1)
 
-                    client.print_transfer_event_details(event, contract, decimals, from_balance_before, to_balance_before)
+                    client.print_transfer_event_details(transfer_event, contract, decimals, from_balance_before, to_balance_before)
+
+                swap_events = client.get_contract_swaps(contract, from_block=last_block + 1, to_block=current_block)
+                click.echo(f"Found {len(swap_events)} new swap events")
+
+                for swap_event in swap_events:
+                    # decimals = client.get_token_decimals(contract)
+                    client.print_swap_event_details(swap_event, contract)
+
                 last_block = current_block
             time.sleep(poll_interval)
     except KeyboardInterrupt:
@@ -129,6 +139,13 @@ def scan(contract_address: str, from_block: int, to_block: int):
             to_balance_before = basescan_client.get_token_balance(to_address, contract, decimals, block_identifier=block_number - 1)
 
             client.print_transfer_event_details(event, contract, decimals, from_balance_before, to_balance_before)
+
+        swap_events = client.get_contract_swaps(contract, from_block=from_block, to_block=to_block)
+        click.echo(f"Found {len(swap_events)} new swap events")
+
+        for swap_event in swap_events:
+            # decimals = client.get_token_decimals(contract)
+            client.print_swap_event_details(swap_event, contract)
 
     except ValueError as e:
         click.echo(f"Error: {str(e)}")

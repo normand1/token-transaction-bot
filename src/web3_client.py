@@ -211,3 +211,83 @@ class Web3Client:
 
         except Exception as e:
             raise ValueError(f"Failed to fetch token balance: {str(e)}") from e
+
+    def get_contract_swaps(self, contract: Contract, from_block: Optional[int] = None, to_block: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Get all Swap events facilitated by the contract."""
+        if not self.w3.is_address(contract.address):
+            raise ValueError("Invalid contract address")
+
+        if from_block is None:
+            latest = self.w3.eth.block_number
+            from_block = max(0, latest - 1000)
+
+        if to_block is None:
+            to_block = self.w3.eth.block_number
+
+        # Extract the Swap event signature
+        swap_event_signature = "0x" + self.w3.keccak(text="Swap(address,uint256,uint256,uint256,uint256,address)").hex()
+
+        logs = self.w3.eth.get_logs({"fromBlock": from_block, "toBlock": to_block, "address": contract.address, "topics": [swap_event_signature]})
+
+        swaps = []
+        for log in logs:
+            try:
+                # Decode the event
+                topics = log["topics"]
+                sender = self.w3.to_checksum_address("0x" + topics[1].hex()[-40:])  # Corrected slicing for address
+                to = self.w3.to_checksum_address("0x" + topics[2].hex()[-40:])  # Corrected slicing for address
+
+                # Ensure data is properly formatted and padded
+                # Convert data to hex string
+                data = log["data"].hex()
+                data = data.zfill(256)  # Ensure the string has the correct length
+
+                # Now you can safely slice and convert to integers
+                amount0In = int(data[0:64], 16)
+                amount1In = int(data[64:128], 16)
+                amount0Out = int(data[128:192], 16)
+                amount1Out = int(data[192:256], 16)
+
+                swaps.append(
+                    {
+                        "transactionHash": log["transactionHash"].hex(),
+                        "blockHash": log["blockHash"].hex(),
+                        "blockNumber": log["blockNumber"],
+                        "logIndex": log["logIndex"],
+                        "sender": sender,
+                        "to": to,
+                        "amount0In": amount0In,
+                        "amount1In": amount1In,
+                        "amount0Out": amount0Out,
+                        "amount1Out": amount1Out,
+                    }
+                )
+            except Exception as e:
+                # Log any errors during decoding
+                swaps.append({"error": str(e), "transactionHash": log["transactionHash"].hex()})
+
+        return swaps
+
+    def print_swap_event_details(self, event: Dict[str, Any], contract: Contract):
+        """Print swap event details."""
+        click.echo("\nSwap Event Details:")
+        click.echo("--------------------------------------")
+        if "error" in event:
+            click.echo(f"Error decoding event: {event['error']} (Transaction: {event['transactionHash']})")
+        else:
+            sender = event.get("sender", "N/A")
+            to = event.get("to", "N/A")
+            amount0In = event.get("amount0In", "N/A")
+            amount1In = event.get("amount1In", "N/A")
+            amount0Out = event.get("amount0Out", "N/A")
+            amount1Out = event.get("amount1Out", "N/A")
+            transaction_hash = event.get("transactionHash", "N/A")
+
+            click.echo(f"Transaction Hash: {transaction_hash}")
+            click.echo(f"Sender: {sender}")
+            click.echo(f"To: {to}")
+            click.echo(f"Amount0 In: {amount0In}")
+            click.echo(f"Amount1 In: {amount1In}")
+            click.echo(f"Amount0 Out: {amount0Out}")
+            click.echo(f"Amount1 Out: {amount1Out}")
+        click.echo("--------------------------------------")
