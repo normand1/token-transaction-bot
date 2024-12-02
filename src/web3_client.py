@@ -52,11 +52,11 @@ class Web3Client:
         transfers = []
         for log in logs:
             try:
-                # Decode the event
-                topics = log["topics"]
-                from_address = self.w3.to_checksum_address("0x" + topics[1][12:].hex())
-                to_address = self.w3.to_checksum_address("0x" + topics[2][12:].hex())
-                value = int(log["data"].hex(), 16)  # Extract token value
+                # Decode the event using the contract's ABI
+                transfer_event = contract.events["Transfer(address,address,uint256)"]().process_log(log)
+                from_address = transfer_event["args"]["from"]
+                to_address = transfer_event["args"]["to"]
+                value = transfer_event["args"]["value"]
 
                 # Check if the transfer was facilitated by the contract
                 if str(from_address).lower() != str(contract.address).lower() and str(to_address).lower() != str(contract.address).lower():
@@ -77,7 +77,7 @@ class Web3Client:
 
         return transfers
 
-    def print_transfer_event_details(self, event: Dict[str, Any], contract: Contract, decimals: Decimal, from_balance_before: str, to_balance_before: str):
+    def print_transfer_event_details(self, event: Dict[str, Any], decimals: Decimal):
         """Print transfer event details."""
         click.echo("\nTransfer Event Details:")
         click.echo("--------------------------------------")
@@ -100,11 +100,6 @@ class Web3Client:
             click.echo(f"From: {from_address}")
             click.echo(f"To: {to_address}")
             click.echo(f"Value: {value}")
-            # TODO: Uncomment when these wallet balances are accurate
-            # click.echo(f"From Balance Before: {from_balance_before}")
-            # click.echo(f"From Balance After: {self.get_token_balance(from_address, contract, decimals)}")
-            # click.echo(f"To Balance Before: {to_balance_before}")
-            # click.echo(f"To Balance After: {self.get_token_balance(to_address, contract, decimals)}")
             click.echo("--------------------------------------")
 
     def get_contract_events(self, contract_address: str, from_block: Optional[int] = None, to_block: Optional[int] = None) -> List[Dict[str, Any]]:
@@ -224,47 +219,51 @@ class Web3Client:
         if to_block is None:
             to_block = self.w3.eth.block_number
 
-        # Extract the Swap event signature
-        swap_event_signature = "0x" + self.w3.keccak(text="Swap(address,uint256,uint256,uint256,uint256,address)").hex()
+        # Check if the Swap event is in the contract ABI
+        if not hasattr(contract.events, "Swap"):
+            return []  # Return an empty list if Swap event is not found
 
-        logs = self.w3.eth.get_logs({"fromBlock": from_block, "toBlock": to_block, "address": contract.address, "topics": [swap_event_signature]})
+        # Get the Swap event from the contract
+        swap_event = contract.events.Swap()
+
+        # Fetch logs using the event filter
+        logs = swap_event.get_logs(from_block=from_block, to_block=to_block)
 
         swaps = []
         for log in logs:
             try:
-                # Decode the event
-                topics = log["topics"]
-                sender = self.w3.to_checksum_address("0x" + topics[1].hex()[-40:])  # Corrected slicing for address
-                to = self.w3.to_checksum_address("0x" + topics[2].hex()[-40:])  # Corrected slicing for address
+                # Fetch the number of decimals for the token
+                decimals = self.get_token_decimals(contract)
 
-                # Ensure data is properly formatted and padded
-                # Convert data to hex string
-                data = log["data"].hex()
-                data = data.zfill(256)  # Ensure the string has the correct length
+                # Format the amounts using the decimals
+                amount1In = Decimal(log.args.amount1In) / Decimal(10**decimals)
+                amount0In = Decimal(log.args.amount0In) / Decimal(10**decimals)
+                amount0Out = Decimal(log.args.amount0Out) / Decimal(10**decimals)
+                amount1Out = Decimal(log.args.amount1Out) / Decimal(10**decimals)
 
-                # Now you can safely slice and convert to integers
-                amount0In = int(data[0:64], 16)
-                amount1In = int(data[64:128], 16)
-                amount0Out = int(data[128:192], 16)
-                amount1Out = int(data[192:256], 16)
-
+                direction = "token0 to token1" if amount0In > 0 and amount1Out > 0 else "token1 to token0"
                 swaps.append(
                     {
-                        "transactionHash": log["transactionHash"].hex(),
-                        "blockHash": log["blockHash"].hex(),
-                        "blockNumber": log["blockNumber"],
-                        "logIndex": log["logIndex"],
-                        "sender": sender,
-                        "to": to,
-                        "amount0In": amount0In,
-                        "amount1In": amount1In,
-                        "amount0Out": amount0Out,
-                        "amount1Out": amount1Out,
+                        "transactionHash": log.transactionHash.hex(),
+                        "blockHash": log.blockHash.hex(),
+                        "blockNumber": log.blockNumber,
+                        "logIndex": log.logIndex,
+                        "sender": log.args.sender,
+                        "to": log.args.to,
+                        "amount1In": format(amount1In, "f").rstrip("0").rstrip(".") or "0",
+                        "amount0In": format(amount0In, "f").rstrip("0").rstrip(".") or "0",
+                        "amount0Out": format(amount0Out, "f").rstrip("0").rstrip(".") or "0",
+                        "amount1Out": format(amount1Out, "f").rstrip("0").rstrip(".") or "0",
+                        "direction": direction,
+                        "changeInHoldings": {
+                            "token0": f"-{amount0In}" if amount0In > 0 else f"+{amount0Out}",
+                            "token1": f"-{amount1In}" if amount1In > 0 else f"+{amount1Out}",
+                        },
                     }
                 )
             except Exception as e:
                 # Log any errors during decoding
-                swaps.append({"error": str(e), "transactionHash": log["transactionHash"].hex()})
+                swaps.append({"error": str(e), "transactionHash": log.get("transactionHash", "N/A").hex()})
 
         return swaps
 
@@ -282,6 +281,8 @@ class Web3Client:
             amount0Out = event.get("amount0Out", "N/A")
             amount1Out = event.get("amount1Out", "N/A")
             transaction_hash = event.get("transactionHash", "N/A")
+            direction = event.get("direction", "N/A")
+            change_in_holdings = event.get("changeInHoldings", {})
 
             click.echo(f"Transaction Hash: {transaction_hash}")
             click.echo(f"Sender: {sender}")
@@ -290,4 +291,6 @@ class Web3Client:
             click.echo(f"Amount1 In: {amount1In}")
             click.echo(f"Amount0 Out: {amount0Out}")
             click.echo(f"Amount1 Out: {amount1Out}")
+            click.echo(f"Direction: {direction}")
+            click.echo(f"Change in Holdings: {change_in_holdings}")
         click.echo("--------------------------------------")
