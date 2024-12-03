@@ -6,3 +6,5 @@ click>=8.1.7
 web3>=6.15.1
 eth-typing>=3.5.2
 eth-utils>=2.3.1 
+pylint>=2.21.2
+python-telegram-bot>=20.0
