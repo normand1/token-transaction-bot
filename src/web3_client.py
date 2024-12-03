@@ -175,13 +175,28 @@ class Web3Client:
                     amount0 = Decimal(amount0_raw) / Decimal(10**decimals0)
                     amount1 = Decimal(amount1_raw) / Decimal(10**decimals1)
 
-                    # Determine direction based on WETH
                     if is_token0_weth:
-                        direction = "BUY" if amount0_raw < 0 else "SELL"  # If WETH decreasing (negative), it's a BUY
+                        direction = "BUY" if amount0_raw < 0 else "SELL"
+                        if direction == "BUY":
+                            amount0 = -(Decimal(amount0_raw) / Decimal(10**decimals0))
+                            amount1 = abs(Decimal(amount1_raw) / Decimal(10**decimals1))
+                        else:
+                            amount0 = abs(Decimal(amount0_raw) / Decimal(10**decimals0))
+                            amount1 = -(Decimal(amount1_raw) / Decimal(10**decimals1))
                     elif is_token1_weth:
-                        direction = "SELL" if amount1_raw < 0 else "BUY"  # If WETH decreasing (negative), it's a BUY
+                        direction = "SELL" if amount1_raw < 0 else "BUY"
+                        if direction == "BUY":
+                            amount0 = abs(Decimal(amount0_raw) / Decimal(10**decimals0))
+                            amount1 = -(Decimal(amount1_raw) / Decimal(10**decimals1))
+                        else:
+                            amount0 = -(Decimal(amount0_raw) / Decimal(10**decimals0))
+                            amount1 = abs(Decimal(amount1_raw) / Decimal(10**decimals1))
                     else:
-                        direction = "token0 to token1" if amount0_raw < 0 else "token1 to token0"
+                        click.echo(f"Unknown token pair: {token0_name} and {token1_name}")
+                        continue
+
+                    # Add direction to swap_data
+                    swap_data["direction"] = direction
 
                     # Prepare swap data for V3 style events
                     swap_data.update(
@@ -189,10 +204,6 @@ class Web3Client:
                             "amount0": str(amount0),
                             "amount1": str(amount1),
                             "direction": direction,
-                            "changeInHoldings": {
-                                token0_name: str(-amount0),
-                                token1_name: str(-amount1),
-                            },
                             "token0_name": token0_name,
                             "token1_name": token1_name,
                         }
@@ -215,10 +226,6 @@ class Web3Client:
                             "amount0Out": str(amount0Out),
                             "amount1Out": str(amount1Out),
                             "direction": direction,
-                            "changeInHoldings": {
-                                "token0": f"+{amount0Out}" if amount0Out > 0 else f"-{amount0In}",
-                                "token1": f"+{amount1Out}" if amount1Out > 0 else f"-{amount1In}",
-                            },
                             "token0_name": token0_name,
                             "token1_name": token1_name,
                         }
