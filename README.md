@@ -1,5 +1,22 @@
 # Token Transaction Bot
 
+## Example output
+
+### Swap Events
+```
+Swap Event Details:
+--------------------------------------
+🔄 New Swap Event
+
+📝 Transaction: https://basescan.org/tx/daae9700c1c83b3b259e6afc18ba9bc146f1d1e382ec4892700aa3777e40b0ab
+👤 Sender: https://basescan.org/address/0xE37e799D5077682FA0a244D46E5649F71457BD09
+📮 Recipient: https://basescan.org/address/0x111111125421cA6dc452d289314280a0f8842A65
+💱 PROXY: 9.126354092846732216 (PROXY)
+💱 Wrapped Ether: -0.0196317 (Wrapped Ether)
+↔️ Direction: BUY
+--------------------------------------
+```
+
 ## Setup
 
 1. Ensure you have pyenv installed
@@ -49,21 +66,4 @@ python -m src.cli monitor --contract-address 0xeD6f2a73b85e61bD1FB68A8bAaA1b0Dc9
 ### Run Playback Transaction for a Range of Blocks
 ```
 python -m src.cli scan --contract-address 0xeD6f2a73b85e61bD1FB68A8bAaA1b0Dc91B717C6 --from-block 23071608 --to-block 23071608
-```
-
-## Example output
-
-### Swap Events
-```
-Swap Event Details:
---------------------------------------
-🔄 New Swap Event
-
-📝 Transaction: https://basescan.org/tx/daae9700c1c83b3b259e6afc18ba9bc146f1d1e382ec4892700aa3777e40b0ab
-👤 Sender: https://basescan.org/address/0xE37e799D5077682FA0a244D46E5649F71457BD09
-📮 Recipient: https://basescan.org/address/0x111111125421cA6dc452d289314280a0f8842A65
-💱 PROXY: 9.126354092846732216 (PROXY)
-💱 Wrapped Ether: -0.0196317 (Wrapped Ether)
-↔️ Direction: BUY
---------------------------------------
 ```

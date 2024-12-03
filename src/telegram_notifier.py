@@ -1,7 +1,6 @@
 """Telegram notification client."""
 
 import os
-from typing import Optional
 from telegram import Bot
 from telegram.error import TelegramError
 import asyncio
