@@ -1,14 +1,20 @@
 """Web3 client for interacting with Base L2."""
 
-from typing import Optional, List, Dict, Any
-from web3 import Web3
+import os
+import time
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
+
 import click
 from dotenv import load_dotenv
-import os
-from decimal import Decimal, getcontext, ROUND_DOWN
-import time
+from decimal import Decimal
+
 from requests import HTTPError
+from web3 import Web3
 from web3.contract import Contract
+
+from src.basescan_client import BaseScanClient
+from src.telegram_notifier import TelegramNotifier
 
 # Load environment variables
 load_dotenv()
@@ -23,6 +29,7 @@ class Web3Client:
         self._last_block = None
         self.contract_abi = None
         self.contract_address = None
+        self.basescan_client = BaseScanClient()
 
     def is_connected(self) -> bool:
         """Check if connected to Base L2."""
@@ -31,76 +38,6 @@ class Web3Client:
     def get_latest_block(self) -> int:
         """Get the latest block number."""
         return self.w3.eth.block_number
-
-    def get_contract_transfers(self, contract: Contract, from_block: Optional[int] = None, to_block: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get all ERC20 Transfer events facilitated by the contract."""
-        if not self.w3.is_address(contract.address):
-            raise ValueError("Invalid contract address")
-
-        if from_block is None:
-            latest = self.w3.eth.block_number
-            from_block = max(0, latest - 1000)
-
-        if to_block is None:
-            to_block = self.w3.eth.block_number
-
-        # Extract the Transfer event signature from the contract ABI
-        transfer_event_signature = "0x" + self.w3.keccak(text="Transfer(address,address,uint256)").hex()
-
-        logs = self.w3.eth.get_logs({"fromBlock": from_block, "toBlock": to_block, "address": contract.address, "topics": [transfer_event_signature]})
-
-        transfers = []
-        for log in logs:
-            try:
-                # Decode the event using the contract's ABI
-                transfer_event = contract.events["Transfer(address,address,uint256)"]().process_log(log)
-                from_address = transfer_event["args"]["from"]
-                to_address = transfer_event["args"]["to"]
-                value = transfer_event["args"]["value"]
-
-                # Check if the transfer was facilitated by the contract
-                if str(from_address).lower() != str(contract.address).lower() and str(to_address).lower() != str(contract.address).lower():
-                    transfers.append(
-                        {
-                            "transactionHash": log["transactionHash"].hex(),
-                            "blockHash": log["blockHash"].hex(),
-                            "blockNumber": log["blockNumber"],
-                            "logIndex": log["logIndex"],
-                            "from": from_address,
-                            "to": to_address,
-                            "value": value,
-                        }
-                    )
-            except Exception as e:
-                # Log any errors during decoding
-                transfers.append({"error": str(e), "transactionHash": log["transactionHash"].hex()})
-
-        return transfers
-
-    def print_transfer_event_details(self, event: Dict[str, Any], decimals: Decimal):
-        """Print transfer event details."""
-        click.echo("\nTransfer Event Details:")
-        click.echo("--------------------------------------")
-        if "error" in event:
-            click.echo(f"Error decoding event: {event['error']} (Transaction: {event['transactionHash']})")
-        else:
-            from_address = event.get("from", "N/A")
-            to_address = event.get("to", "N/A")
-            value_raw = event.get("value", "N/A")
-            transaction_hash = event.get("transactionHash", "N/A")
-
-            # Format the value using the same approach as get_token_balance
-            try:
-                decimal_value = Decimal(value_raw) / Decimal(10**decimals)
-                value = format(decimal_value, "f").rstrip("0").rstrip(".") or "0"
-            except (ValueError, TypeError):
-                value = "N/A"
-
-            click.echo(f"Transaction Hash: {transaction_hash}")
-            click.echo(f"From: {from_address}")
-            click.echo(f"To: {to_address}")
-            click.echo(f"Value: {value}")
-            click.echo("--------------------------------------")
 
     def get_contract_events(self, contract_address: str, from_block: Optional[int] = None, to_block: Optional[int] = None) -> List[Dict[str, Any]]:
         """Get all events for a specific contract."""
@@ -169,128 +106,192 @@ class Web3Client:
         except Exception as e:
             raise ValueError(f"Failed to fetch decimals for contract {contract.address}: {str(e)}") from e
 
-    def get_token_balance(self, wallet_address: str, contract: Contract, decimals: int) -> str:
-        """Fetch the balance of a specific token for a given wallet address."""
-        try:
-            # Set the decimal context precision high enough to handle large numbers
-            getcontext().prec = 50
-
-            # Call the balanceOf function
-            balance = contract.functions.balanceOf(Web3.to_checksum_address(wallet_address)).call()
-
-            # Convert balance and decimals to appropriate types
-            balance_dec = Decimal(balance)
-            decimals_dec = int(decimals)
-
-            # Convert balance to human-readable format
-            decimal_balance = balance_dec / (Decimal(10) ** decimals_dec)
-
-            # Handle zero balance separately to avoid '0E-18' format
-            if decimal_balance.is_zero():
-                formatted_balance = "0"
-            else:
-                # Quantize to avoid scientific notation and set decimal places
-                quantize_exponent = Decimal(f"1e-{decimals_dec}")
-                decimal_balance = decimal_balance.quantize(quantize_exponent, rounding=ROUND_DOWN)
-
-                # Convert to string
-                formatted_balance = str(decimal_balance)
-
-                # Remove trailing zeros and decimal point if necessary
-                formatted_balance = formatted_balance.rstrip("0").rstrip(".")
-
-                if not formatted_balance:
-                    formatted_balance = "0"
-
-            return formatted_balance
-
-        except Exception as e:
-            raise ValueError(f"Failed to fetch token balance: {str(e)}") from e
-
     def get_contract_swaps(self, contract: Contract, from_block: Optional[int] = None, to_block: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get all Swap events facilitated by the contract."""
+        """Get all Swap events facilitated by the contract. This is used for realtime monitoring and historical analysis.
+
+        Args:
+            contract (Contract): The Web3 contract instance to query events from.
+            from_block (Optional[int]): Starting block number for the event query. Defaults to (latest - 1000) if None.
+            to_block (Optional[int]): Ending block number for the event query. Defaults to latest block if None.
+
+        Returns:
+            List[Dict[str, Any]]: List of swap events with standardized fields.
+        """
         if not self.w3.is_address(contract.address):
             raise ValueError("Invalid contract address")
 
-        if from_block is None:
-            latest = self.w3.eth.block_number
-            from_block = max(0, latest - 1000)
+        # Set default block range
+        latest_block = self.w3.eth.block_number
+        from_block = from_block if from_block is not None else max(0, latest_block - 1000)
+        to_block = to_block if to_block is not None else latest_block
 
-        if to_block is None:
-            to_block = self.w3.eth.block_number
-
-        # Check if the Swap event is in the contract ABI
+        # Validate the presence of the Swap event in the contract's ABI
         if not hasattr(contract.events, "Swap"):
-            return []  # Return an empty list if Swap event is not found
+            click.echo(f"Swap event not found in the ABI for contract {contract.address}")
+            return []
 
-        # Get the Swap event from the contract
+        # Fetch token0 and token1 addresses and set up contracts
+        try:
+            token0_address = contract.functions.token0().call()
+            token1_address = contract.functions.token1().call()
+
+            # Load token contract ABIs
+            token0_contract = self.basescan_client.load_contract(token0_address)
+            token1_contract = self.basescan_client.load_contract(token1_address)
+
+            # Fetch token decimals and names
+            decimals0 = token0_contract.functions.decimals().call()
+            decimals1 = token1_contract.functions.decimals().call()
+            token0_name = token0_contract.functions.name().call()
+            token1_name = token1_contract.functions.name().call()
+
+            # Check if either token is WETH
+            is_token0_weth = token0_name.lower() == "wrapped ether" or token0_name.lower() == "weth"
+            is_token1_weth = token1_name.lower() == "wrapped ether" or token1_name.lower() == "weth"
+
+        except Exception as e:
+            raise RuntimeError(f"Error initializing token contracts: {str(e)}")
+
+        # Get the Swap event logs
         swap_event = contract.events.Swap()
-
-        # Fetch logs using the event filter
-        logs = swap_event.get_logs(from_block=from_block, to_block=to_block)
+        try:
+            click.echo(f"Fetching Swap event logs from block {from_block} to {to_block}")
+            logs = swap_event.get_logs(from_block=from_block, to_block=to_block)
+        except Exception as e:
+            raise RuntimeError(f"Error fetching Swap event logs: {str(e)}")
 
         swaps = []
         for log in logs:
             try:
-                # Fetch the number of decimals for the token
-                decimals = self.get_token_decimals(contract)
+                args = log.args
+                swap_data = {}
 
-                # Format the amounts using the decimals
-                amount1In = Decimal(log.args.amount1In) / Decimal(10**decimals)
-                amount0In = Decimal(log.args.amount0In) / Decimal(10**decimals)
-                amount0Out = Decimal(log.args.amount0Out) / Decimal(10**decimals)
-                amount1Out = Decimal(log.args.amount1Out) / Decimal(10**decimals)
+                # Handle Uniswap V3 style events (amount0 and amount1)
+                if hasattr(args, "amount0") and hasattr(args, "amount1"):
+                    amount0_raw = args.amount0
+                    amount1_raw = args.amount1
 
-                direction = "token0 to token1" if amount0In > 0 and amount1Out > 0 else "token1 to token0"
-                swaps.append(
+                    # Convert amounts to human-readable decimals
+                    amount0 = Decimal(amount0_raw) / Decimal(10**decimals0)
+                    amount1 = Decimal(amount1_raw) / Decimal(10**decimals1)
+
+                    # Determine direction based on WETH
+                    if is_token0_weth:
+                        direction = "BUY" if amount0_raw < 0 else "SELL"  # If WETH decreasing (negative), it's a BUY
+                    elif is_token1_weth:
+                        direction = "SELL" if amount1_raw < 0 else "BUY"  # If WETH decreasing (negative), it's a BUY
+                    else:
+                        direction = "token0 to token1" if amount0_raw < 0 else "token1 to token0"
+
+                    # Prepare swap data for V3 style events
+                    swap_data.update(
+                        {
+                            "amount0": str(amount0),
+                            "amount1": str(amount1),
+                            "direction": direction,
+                            "changeInHoldings": {
+                                token0_name: str(-amount0),
+                                token1_name: str(-amount1),
+                            },
+                            "token0_name": token0_name,
+                            "token1_name": token1_name,
+                        }
+                    )
+
+                # Handle Uniswap V2 style events (amount0In, amount1In, etc.)
+                elif all(hasattr(args, attr) for attr in ["amount0In", "amount1In", "amount0Out", "amount1Out"]):
+                    amount0In = Decimal(args.amount0In) / Decimal(10**decimals0)
+                    amount1In = Decimal(args.amount1In) / Decimal(10**decimals1)
+                    amount0Out = Decimal(args.amount0Out) / Decimal(10**decimals0)
+                    amount1Out = Decimal(args.amount1Out) / Decimal(10**decimals1)
+
+                    direction = "token0 to token1" if amount0In > 0 and amount1Out > 0 else "token1 to token0"
+
+                    # Prepare swap data for V2 style events
+                    swap_data.update(
+                        {
+                            "amount0In": str(amount0In),
+                            "amount1In": str(amount1In),
+                            "amount0Out": str(amount0Out),
+                            "amount1Out": str(amount1Out),
+                            "direction": direction,
+                            "changeInHoldings": {
+                                "token0": f"+{amount0Out}" if amount0Out > 0 else f"-{amount0In}",
+                                "token1": f"+{amount1Out}" if amount1Out > 0 else f"-{amount1In}",
+                            },
+                            "token0_name": token0_name,
+                            "token1_name": token1_name,
+                        }
+                    )
+
+                # Add common fields
+                swap_data.update(
                     {
                         "transactionHash": log.transactionHash.hex(),
                         "blockHash": log.blockHash.hex(),
                         "blockNumber": log.blockNumber,
                         "logIndex": log.logIndex,
-                        "sender": log.args.sender,
-                        "to": log.args.to,
-                        "amount1In": format(amount1In, "f").rstrip("0").rstrip(".") or "0",
-                        "amount0In": format(amount0In, "f").rstrip("0").rstrip(".") or "0",
-                        "amount0Out": format(amount0Out, "f").rstrip("0").rstrip(".") or "0",
-                        "amount1Out": format(amount1Out, "f").rstrip("0").rstrip(".") or "0",
-                        "direction": direction,
-                        "changeInHoldings": {
-                            "token0": f"-{amount0In}" if amount0In > 0 else f"+{amount0Out}",
-                            "token1": f"-{amount1In}" if amount1In > 0 else f"+{amount1Out}",
-                        },
+                        "sender": getattr(args, "sender", None) or "N/A",
+                        "recipient": getattr(args, "recipient", None) or "N/A",
                     }
                 )
+
+                swaps.append(swap_data)
+
             except Exception as e:
-                # Log any errors during decoding
-                swaps.append({"error": str(e), "transactionHash": log.get("transactionHash", "N/A").hex()})
+                swaps.append(
+                    {
+                        "error": str(e),
+                        "transactionHash": log.transactionHash.hex() if hasattr(log, "transactionHash") else "N/A",
+                    }
+                )
 
         return swaps
 
-    def print_swap_event_details(self, event: Dict[str, Any], contract: Contract):
-        """Print swap event details."""
+    def print_swap_event_details(self, event: Dict[str, Any]):
+        """Print swap event details and send to Telegram."""
+        # Create message for both console and Telegram
+        if "error" in event:
+            message = f"Error decoding event: {event['error']} (Transaction: {event['transactionHash']})"
+        else:
+            # Common fields
+            transaction_hash = event.get("transactionHash", "N/A")
+            sender = event.get("sender", "N/A")
+            recipient = event.get("recipient", "N/A")
+            direction = event.get("direction", "N/A")
+            token0_name = event.get("token0_name", "Unknown")
+            token1_name = event.get("token1_name", "Unknown")
+
+            # Build message with HTML formatting for Telegram
+            message = (
+                f"🔄 <b>New Swap Event</b>\n\n"
+                f"📝 <b>Transaction:</b> https://basescan.org/tx/{transaction_hash}\n"
+                f"👤 <b>Sender:</b> https://basescan.org/address/{sender}\n"
+                f"📮 <b>Recipient:</b> https://basescan.org/address/{recipient}\n"
+            )
+
+            # Add amounts based on event type
+            if "amount0" in event:
+                message += f"💱 <b>{token0_name}:</b> {event['amount0']} ({token0_name})\n" f"💱 <b>{token1_name}:</b> {event['amount1']} ({token1_name})\n"
+            else:
+                message += (
+                    f"📥 <b>{token0_name} In:</b> {event.get('amount0In', 'N/A')} ({event.get('token0_name', 'Unknown')})\n"
+                    f"📥 <b>{token1_name} In:</b> {event.get('amount1In', 'N/A')} ({event.get('token1_name', 'Unknown')})\n"
+                    f"📤 <b>{token0_name} Out:</b> {event.get('amount0Out', 'N/A')} ({event.get('token0_name', 'Unknown')})\n"
+                    f"📤 <b>{token1_name} Out:</b> {event.get('amount1Out', 'N/A')} ({event.get('token1_name', 'Unknown')})\n"
+                )
+
+            message += f"↔️ <b>Direction:</b> {direction}"
+
+        # Print to console
         click.echo("\nSwap Event Details:")
         click.echo("--------------------------------------")
-        if "error" in event:
-            click.echo(f"Error decoding event: {event['error']} (Transaction: {event['transactionHash']})")
-        else:
-            sender = event.get("sender", "N/A")
-            to = event.get("to", "N/A")
-            amount0In = event.get("amount0In", "N/A")
-            amount1In = event.get("amount1In", "N/A")
-            amount0Out = event.get("amount0Out", "N/A")
-            amount1Out = event.get("amount1Out", "N/A")
-            transaction_hash = event.get("transactionHash", "N/A")
-            direction = event.get("direction", "N/A")
-            change_in_holdings = event.get("changeInHoldings", {})
-
-            click.echo(f"Transaction Hash: {transaction_hash}")
-            click.echo(f"Sender: {sender}")
-            click.echo(f"To: {to}")
-            click.echo(f"Amount0 In: {amount0In}")
-            click.echo(f"Amount1 In: {amount1In}")
-            click.echo(f"Amount0 Out: {amount0Out}")
-            click.echo(f"Amount1 Out: {amount1Out}")
-            click.echo(f"Direction: {direction}")
-            click.echo(f"Change in Holdings: {change_in_holdings}")
+        click.echo(message.replace("<b>", "").replace("</b>", ""))
         click.echo("--------------------------------------")
+
+        # Send to Telegram
+        try:
+            notifier = TelegramNotifier()
+            notifier.send_message(message)
+        except Exception as e:
+            click.echo(f"Failed to send Telegram notification: {str(e)}")

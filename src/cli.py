@@ -21,8 +21,8 @@ def cli():
 )
 @click.option(
     "--poll-interval",
-    default=2,
-    help="Polling interval in seconds (default: 2)",
+    default=12,
+    help="Polling interval in seconds (default: 12)",
     type=int,
 )
 def monitor(contract_address: str, poll_interval: int):
@@ -44,7 +44,7 @@ def monitor(contract_address: str, poll_interval: int):
         return
 
     click.echo("Connected to Base L2")
-    click.echo(f"Monitoring contract: {contract_address}")
+    click.echo(f"Monitoring pool ca: {contract_address}")
     click.echo(f"Latest block: {client.get_latest_block()}")
     click.echo("Waiting for new events...")
 
@@ -54,18 +54,11 @@ def monitor(contract_address: str, poll_interval: int):
         while True:
             current_block = client.get_latest_block()
             if current_block > last_block:
-                transfer_events = client.get_contract_transfers(contract, from_block=last_block + 1, to_block=current_block)
-                click.echo(f"Found {len(transfer_events)} new transfer events")
-
-                for transfer_event in transfer_events:
-                    decimals = client.get_token_decimals(contract)
-                    client.print_transfer_event_details(transfer_event, decimals)
-
                 swap_events = client.get_contract_swaps(contract, from_block=last_block + 1, to_block=current_block)
                 click.echo(f"Found {len(swap_events)} new swap events")
 
                 for swap_event in swap_events:
-                    client.print_swap_event_details(swap_event, contract)
+                    client.print_swap_event_details(swap_event)
 
                 last_block = current_block
             time.sleep(poll_interval)
@@ -112,24 +105,11 @@ def scan(contract_address: str, from_block: int, to_block: int):
     click.echo(f"Scanning contract: {contract.address}")
 
     try:
-        events = client.get_contract_transfers(contract, from_block=from_block, to_block=to_block)
-
-        if not events:
-            click.echo("No events found")
-            return
-
-        click.echo(f"\nTotal events found: {len(events)}")
-        decimals = client.get_token_decimals(contract)
-
-        for event in events:
-            client.print_transfer_event_details(event, decimals)
-
         swap_events = client.get_contract_swaps(contract, from_block=from_block, to_block=to_block)
         click.echo(f"Found {len(swap_events)} new swap events")
 
         for swap_event in swap_events:
-            # decimals = client.get_token_decimals(contract)
-            client.print_swap_event_details(swap_event, contract)
+            client.print_swap_event_details(swap_event)
 
     except ValueError as e:
         click.echo(f"Error: {str(e)}")

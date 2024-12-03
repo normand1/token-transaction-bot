@@ -12,7 +12,7 @@
             "args": [
                 "monitor",
                 "--contract-address",
-                "0x6d6391b9bd02eefa00fa711fb1cb828a6471d283"
+                "0xeD6f2a73b85e61bD1FB68A8bAaA1b0Dc91B717C6"
             ],
             "console": "integratedTerminal"
         },
@@ -24,11 +24,11 @@
             "args": [
                 "scan",
                 "--contract-address",
-                "0x01929F1aE2dc8Cac021E67987500389aE3536CeD",
+                "0xeD6f2a73b85e61bD1FB68A8bAaA1b0Dc91B717C6",
                 "--from-block",
-                "23071608",
+                "23217401",
                 "--to-block",
-                "23071608"
+                "23217403"
             ],
             "console": "integratedTerminal"
         },
