@@ -59,11 +59,11 @@ Swap Event Details:
 --------------------------------------
 🔄 New Swap Event
 
-📝 Transaction: https://basescan.org/tx/3b0afab80d027f9ccce1b240536891fd8484f425509f901aa68025b89055ab58
-👤 Sender: https://basescan.org/address/0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD
-📮 Recipient: https://basescan.org/address/0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD
-💱 PROXY: -415.699558092902942699 (PROXY)
-💱 Wrapped Ether: 0.8 (Wrapped Ether)
+📝 Transaction: https://basescan.org/tx/daae9700c1c83b3b259e6afc18ba9bc146f1d1e382ec4892700aa3777e40b0ab
+👤 Sender: https://basescan.org/address/0xE37e799D5077682FA0a244D46E5649F71457BD09
+📮 Recipient: https://basescan.org/address/0x111111125421cA6dc452d289314280a0f8842A65
+💱 PROXY: 9.126354092846732216 (PROXY)
+💱 Wrapped Ether: -0.0196317 (Wrapped Ether)
 ↔️ Direction: BUY
 --------------------------------------
 ```
