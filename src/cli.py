@@ -5,6 +5,7 @@ import time
 from .web3_client import Web3Client
 from .basescan_client import BaseScanClient
 from web3 import Web3
+from .notifier import Notifier
 
 
 @click.group()
@@ -25,11 +26,16 @@ def cli():
     help="Polling interval in seconds (default: 12)",
     type=int,
 )
-def monitor(contract_address: str, poll_interval: int):
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Run without sending notifications",
+)
+def monitor(contract_address: str, poll_interval: int, dry_run: bool):
     """Monitor transactions for a specific contract on Base L2."""
     client = Web3Client()
     basescan_client = BaseScanClient()
-
+    notifier = Notifier()
     if not client.is_connected():
         click.echo("Error: Could not connect to Base L2")
         return
@@ -54,11 +60,11 @@ def monitor(contract_address: str, poll_interval: int):
         while True:
             current_block = client.get_latest_block()
             if current_block > last_block:
-                swap_events = client.get_contract_swaps(contract, from_block=last_block + 1, to_block=current_block)
+                swap_events = client.get_contract_swaps(contract, from_block=last_block + 1, to_block=current_block, dry_run=dry_run)
                 click.echo(f"Found {len(swap_events)} new swap events")
 
                 for swap_event in swap_events:
-                    client.print_swap_event_details(swap_event)
+                    notifier.notify(swap_event)
 
                 last_block = current_block
             time.sleep(poll_interval)
@@ -84,10 +90,17 @@ def monitor(contract_address: str, poll_interval: int):
     help="End block number (default: latest)",
     type=int,
 )
-def scan(contract_address: str, from_block: int, to_block: int):
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Run without sending notifications",
+)
+def scan(contract_address: str, from_block: int, to_block: int, dry_run: bool):
     """Scan the blockchain for contract events."""
     client = Web3Client()
     basescan_client = BaseScanClient()
+    notifier = Notifier()
+
     if not client.is_connected():
         click.echo("Error: Could not connect to Base L2")
         return
@@ -105,11 +118,11 @@ def scan(contract_address: str, from_block: int, to_block: int):
     click.echo(f"Scanning contract: {contract.address}")
 
     try:
-        swap_events = client.get_contract_swaps(contract, from_block=from_block, to_block=to_block)
+        swap_events = client.get_contract_swaps(contract, from_block=from_block, to_block=to_block, dry_run=dry_run)
         click.echo(f"Found {len(swap_events)} new swap events")
 
         for swap_event in swap_events:
-            client.print_swap_event_details(swap_event)
+            notifier.notify(swap_event)
 
     except ValueError as e:
         click.echo(f"Error: {str(e)}")

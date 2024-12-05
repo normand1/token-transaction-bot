@@ -6,7 +6,6 @@ from decimal import Decimal
 from web3 import Web3
 from web3.contract import Contract
 from web3.types import ChecksumAddress
-import click
 
 
 class BaseScanClient:

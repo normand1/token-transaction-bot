@@ -12,7 +12,8 @@
             "args": [
                 "monitor",
                 "--contract-address",
-                "0xeD6f2a73b85e61bD1FB68A8bAaA1b0Dc91B717C6"
+                "0xeD6f2a73b85e61bD1FB68A8bAaA1b0Dc91B717C6",
+                "--dry-run"
             ],
             "console": "integratedTerminal"
         },
@@ -28,7 +29,8 @@
                 "--from-block",
                 "23222408",
                 "--to-block",
-                "23222410"
+                "23222410",
+                "--dry-run"
             ],
             "console": "integratedTerminal"
         },
