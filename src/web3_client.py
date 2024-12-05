@@ -1,22 +1,16 @@
 """Web3 client for interacting with Base L2."""
 
 import os
-import time
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import click
 from dotenv import load_dotenv
-from decimal import Decimal
-
-from requests import HTTPError
 from web3 import Web3
 from web3.contract import Contract
 
 from src.basescan_client import BaseScanClient
-from src.telegram_notifier import TelegramNotifier
 
-# Load environment variables
 load_dotenv()
 
 
@@ -39,80 +33,14 @@ class Web3Client:
         """Get the latest block number."""
         return self.w3.eth.block_number
 
-    def get_contract_events(self, contract_address: str, from_block: Optional[int] = None, to_block: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Get all events for a specific contract."""
-        if not self.w3.is_address(contract_address):
-            raise ValueError("Invalid contract address")
-
-        # If no from_block specified, use the last 1000 blocks as default range
-        if from_block is None:
-            latest = self.w3.eth.block_number
-            from_block = max(0, latest - 1000)
-
-        # If no to_block specified, use the latest block
-        if to_block is None:
-            to_block = self.w3.eth.block_number
-
-        max_retries = 3
-        retry_delay = 2  # seconds
-
-        for attempt in range(max_retries):
-            try:
-                # Fetch logs from the blockchain
-                logs = self.w3.eth.get_logs({"fromBlock": from_block, "toBlock": to_block, "address": contract_address})
-
-                # Process logs
-                events = []
-                for log in logs:
-                    event = {
-                        "transactionHash": log["transactionHash"].hex(),
-                        "blockHash": log["blockHash"].hex(),
-                        "topics": [topic.hex() for topic in log["topics"]],
-                        "data": log["data"],
-                        "logIndex": log["logIndex"],
-                        "blockNumber": log["blockNumber"],
-                    }
-
-                    events.append(event)
-
-                return events
-
-            except HTTPError as e:
-                if e.response.status_code == 503:
-                    if attempt < max_retries - 1:  # don't sleep on last attempt
-                        print(f"Server unavailable, retrying in {retry_delay} seconds... (Attempt {attempt + 1}/{max_retries})")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2  # exponential backoff
-                        continue
-                raise  # re-raise the exception if we're out of retries or it's not a 503
-
-        return []  # return empty list if all retries failed
-
-    def get_token_decimals(self, contract: Contract) -> int:
-        """
-        Fetch the number of decimals for an ERC20 token using the ABI loaded in the w3 client.
-
-        Parameters:
-            w3 (Web3): The Web3 instance with the ABI already loaded.
-            contract (Contract): The contract instance.
-
-        Returns:
-            int: The number of decimals for the token.
-        """
-        try:
-            # Call the decimals function
-            decimals = contract.functions.decimals().call()
-            return decimals
-        except Exception as e:
-            raise ValueError(f"Failed to fetch decimals for contract {contract.address}: {str(e)}") from e
-
-    def get_contract_swaps(self, contract: Contract, from_block: Optional[int] = None, to_block: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_contract_swaps(self, contract: Contract, from_block: Optional[int] = None, to_block: Optional[int] = None, dry_run: bool = False) -> List[Dict[str, Any]]:
         """Get all Swap events facilitated by the contract. This is used for realtime monitoring and historical analysis.
 
         Args:
             contract (Contract): The Web3 contract instance to query events from.
             from_block (Optional[int]): Starting block number for the event query. Defaults to (latest - 1000) if None.
             to_block (Optional[int]): Ending block number for the event query. Defaults to latest block if None.
+            dry_run (bool): If True, adds dry run flag to swap events. Defaults to False.
 
         Returns:
             List[Dict[str, Any]]: List of swap events with standardized fields.
@@ -150,7 +78,7 @@ class Web3Client:
             is_token1_weth = token1_name.lower() == "wrapped ether" or token1_name.lower() == "weth"
 
         except Exception as e:
-            raise RuntimeError(f"Error initializing token contracts: {str(e)}")
+            raise RuntimeError(f"Error initializing token contracts: {str(e)}") from e
 
         # Get the Swap event logs
         swap_event = contract.events.Swap()
@@ -158,7 +86,7 @@ class Web3Client:
             click.echo(f"Fetching Swap event logs from block {from_block} to {to_block}")
             logs = swap_event.get_logs(from_block=from_block, to_block=to_block)
         except Exception as e:
-            raise RuntimeError(f"Error fetching Swap event logs: {str(e)}")
+            raise RuntimeError(f"Error fetching Swap event logs: {str(e)}") from e
 
         swaps = []
         for log in logs:
@@ -234,12 +162,13 @@ class Web3Client:
                 # Add common fields
                 swap_data.update(
                     {
-                        "transactionHash": log.transactionHash.hex(),
-                        "blockHash": log.blockHash.hex(),
+                        "transactionHash": "0x" + log.transactionHash.hex(),
+                        "blockHash": "0x" + log.blockHash.hex(),
                         "blockNumber": log.blockNumber,
                         "logIndex": log.logIndex,
                         "sender": getattr(args, "sender", None) or "N/A",
                         "recipient": getattr(args, "recipient", None) or "N/A",
+                        "dry_run": dry_run,
                     }
                 )
 
@@ -249,56 +178,8 @@ class Web3Client:
                 swaps.append(
                     {
                         "error": str(e),
-                        "transactionHash": log.transactionHash.hex() if hasattr(log, "transactionHash") else "N/A",
+                        "transactionHash": "0x" + log.transactionHash.hex() if hasattr(log, "transactionHash") else "N/A",
                     }
                 )
 
         return swaps
-
-    def print_swap_event_details(self, event: Dict[str, Any]):
-        """Print swap event details and send to Telegram."""
-        # Create message for both console and Telegram
-        if "error" in event:
-            message = f"Error decoding event: {event['error']} (Transaction: {event['transactionHash']})"
-        else:
-            # Common fields
-            transaction_hash = event.get("transactionHash", "N/A")
-            sender = event.get("sender", "N/A")
-            recipient = event.get("recipient", "N/A")
-            direction = event.get("direction", "N/A")
-            token0_name = event.get("token0_name", "Unknown")
-            token1_name = event.get("token1_name", "Unknown")
-
-            # Build message with HTML formatting for Telegram
-            message = (
-                f"🔄 <b>New Swap Event</b>\n\n"
-                f"📝 <b>Transaction:</b> https://basescan.org/tx/{transaction_hash}\n"
-                f"👤 <b>Sender:</b> https://basescan.org/address/{sender}\n"
-                f"📮 <b>Recipient:</b> https://basescan.org/address/{recipient}\n"
-            )
-
-            # Add amounts based on event type
-            if "amount0" in event:
-                message += f"💱 <b>{token0_name}:</b> {event['amount0']} ({token0_name})\n" f"💱 <b>{token1_name}:</b> {event['amount1']} ({token1_name})\n"
-            else:
-                message += (
-                    f"📥 <b>{token0_name} In:</b> {event.get('amount0In', 'N/A')} ({event.get('token0_name', 'Unknown')})\n"
-                    f"📥 <b>{token1_name} In:</b> {event.get('amount1In', 'N/A')} ({event.get('token1_name', 'Unknown')})\n"
-                    f"📤 <b>{token0_name} Out:</b> {event.get('amount0Out', 'N/A')} ({event.get('token0_name', 'Unknown')})\n"
-                    f"📤 <b>{token1_name} Out:</b> {event.get('amount1Out', 'N/A')} ({event.get('token1_name', 'Unknown')})\n"
-                )
-
-            message += f"↔️ <b>Direction:</b> {direction}"
-
-        # Print to console
-        click.echo("\nSwap Event Details:")
-        click.echo("--------------------------------------")
-        click.echo(message.replace("<b>", "").replace("</b>", ""))
-        click.echo("--------------------------------------")
-
-        # Send to Telegram
-        try:
-            notifier = TelegramNotifier()
-            notifier.send_message(message)
-        except Exception as e:
-            click.echo(f"Failed to send Telegram notification: {str(e)}")
